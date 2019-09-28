@@ -174,7 +174,7 @@ static int xdplua_do_redirect(lua_State *L) {
 	uh->check = csum_tcpudp_magic(iph->saddr, iph->daddr, udplen,
 		IPPROTO_UDP, csum_partial((unsigned char *)uh, udplen, 0));
 
-	ri->ifindex = ifindex;
+	ri->tgt_index = ifindex;
 	ri->flags = 0;
 	WRITE_ONCE(ri->map, NULL);
 	return 0;
@@ -189,11 +189,49 @@ static int xdplua_get_ifindex(lua_State *L) {
 	return 1;
 }
 
+static int xdplua_map_update_elem(lua_State *L) {
+	const struct bpf_func_proto *map_udpate_proto;
+	struct bpf_map *map;
+	int key;
+	int elem;
+	int ret;
+
+	map = lua_touserdata(L, 1);
+	key = lua_tointeger(L, 2);
+	elem = lua_tointeger(L, 3);
+
+	ret = CALLHELPER(map_udpate_proto, map_update_elem, map, &key, &elem, 0, 0);
+
+	lua_pushinteger(L, ret);
+	return 1;
+}
+
+static int xdplua_map_lookup_elem(lua_State *L) {
+	static const struct bpf_func_proto *map_lookup_proto;
+	struct bpf_map *map;
+	int key;
+	int *elem;
+
+	map = lua_touserdata(L, 1);
+	key = lua_tointeger(L, 2);
+
+	elem = (int *) CALLHELPER(map_lookup_proto, map_lookup_elem, map, &key,
+								0, 0, 0);
+
+	if (!elem)
+		return luaL_error(L, "unable to lookup element");
+
+	lua_pushinteger(L, *elem);
+	return 1;
+}
+
 static const luaL_Reg xdplua_lib[] = {
-	{"udp_reply", xdplua_udp_reply},
-	{"fib_lookup" , xdplua_fib_lookup},
-	{"get_ifindex" , xdplua_get_ifindex},
-	{"do_redirect" , xdplua_do_redirect},
+	{"udp_reply",			xdplua_udp_reply},
+	{"fib_lookup",			xdplua_fib_lookup},
+	{"get_ifindex",			xdplua_get_ifindex},
+	{"do_redirect",			xdplua_do_redirect},
+	{"bpf_map_update_elem",	xdplua_map_update_elem},
+	{"bpf_map_lookup_elem",	xdplua_map_lookup_elem},
 	{NULL, NULL}
 };
 

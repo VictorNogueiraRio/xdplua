@@ -28,5 +28,10 @@
 	*v = lua_touserdata(L, -1); \
 	lua_pop(L, 1); }
 
+#define CALLHELPER(funcproto, funcname, arg1, arg2, arg3, arg4, arg5) ({ \
+	funcproto = xdp_verifier_ops.get_func_proto( \
+						BPF_FUNC_##funcname, NULL); \
+	funcproto->func((u64)arg1, (u64)arg2, (u64)arg3, (u64)arg4, (u64)arg5); })
+
 int luaopen_xdplua(lua_State *L);
 #endif
