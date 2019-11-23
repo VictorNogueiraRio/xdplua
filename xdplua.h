@@ -8,6 +8,7 @@
 
 #include <linux/skbuff.h>
 #include <net/udp.h>
+#include <net/tcp.h>
 #include <net/ip.h>
 #include <linux/if_ether.h>
 #include <linux/bpf.h>

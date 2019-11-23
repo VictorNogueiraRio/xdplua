@@ -24,6 +24,97 @@ static void switch_udp(struct udphdr *uh) {
 	uh->dest = source;
 }
 
+static void switch_tcp(struct tcphdr *tcph) {
+	unsigned short source;
+
+	source = tcph->source;
+	tcph->source = tcph->dest;
+	tcph->dest = source;
+}
+
+static void handle_link_layer_reply(struct sk_buff *skb) {
+	struct ethhdr *eth;
+
+	eth = (struct ethhdr *) skb_mac_header(skb);
+	switch_eth(eth);
+}
+
+
+static void handle_network_layer_reply(struct sk_buff *skb, int lendiff) {
+	struct iphdr *iph;
+
+	skb_reset_network_header(skb);
+	iph = ip_hdr(skb);
+	switch_ip(iph);
+}
+
+static void adjust_iphdrlen(struct iphdr *iph, int lendiff) {
+	short iphdrlen;
+
+	iphdrlen = lendiff;
+	iph->tot_len = ntohs(iphdrlen);
+}
+
+static void handle_ip_checksum(struct iphdr *iph) {
+	iph->check = 0;
+	iph->check = ip_fast_csum((unsigned char *) iph, iph->ihl);
+}
+
+static void handle_tcp_checksum(struct iphdr *iph, struct tcphdr *tcph) {
+	int tcplen;
+
+	tcplen = tcph->doff * 4;
+	tcph->check = 0;
+	tcph->check = csum_tcpudp_magic(iph->saddr, iph->daddr, tcplen,
+		IPPROTO_TCP, csum_partial((unsigned char *)tcph, tcplen, 0));
+}
+
+static int xdplua_tcp_rst_reply(lua_State *L) {
+	struct iphdr *iph;
+	struct tcphdr *tcph;
+	int maclen;
+	int iplen;
+	int seqnum;
+	struct sk_buff *skb = (struct sk_buff *) lua_topointer(L, -1);
+
+	maclen = skb->data - skb_mac_header(skb);
+
+	handle_link_layer_reply(skb);
+	handle_network_layer_reply(skb, 0);
+	iph = ip_hdr(skb);
+	iplen = iph->ihl * 4;
+
+	skb_set_transport_header(skb, iplen);
+	tcph = tcp_hdr(skb);
+
+	switch_tcp(tcph);
+
+	adjust_iphdrlen(iph, sizeof(struct tcphdr) + iplen);
+	handle_ip_checksum(iph);
+
+	seqnum = tcph->seq;
+	tcph->seq = htonl(ntohl(tcph->ack_seq));
+	tcph->ack_seq = htonl(ntohl(seqnum) + tcph->syn + tcph->fin + skb->len - ip_hdrlen(skb) - (tcph->doff << 2));
+
+	tcph->doff = sizeof(struct tcphdr) / 4;
+	tcph->res1 = 0;
+	tcph->fin = 0;
+	tcph->syn = 0;
+	tcph->rst = 1;
+	tcph->psh = 0;
+	tcph->ack = 1;
+	tcph->urg = 0;
+	tcph->ece = 0;
+	tcph->cwr = 0;
+
+	tcph->window = 0;
+
+	__skb_set_length(skb, iplen + sizeof(struct tcphdr));
+	handle_tcp_checksum(iph, tcph);
+
+	return 0;
+}
+
 static int xdplua_udp_reply(lua_State *L) {
 	int additionallen;
 	size_t payloadlen;
@@ -86,7 +177,6 @@ static int xdplua_udp_reply(lua_State *L) {
 	lua_pushinteger(L, XDP_TX);
 	return 1;
 }
-
 static int xdplua_fib_lookup(lua_State *L) {
 	struct xdp_rxq_info rxq;
 	struct sk_buff *skb;
@@ -227,11 +317,12 @@ static int xdplua_map_lookup_elem(lua_State *L) {
 
 static const luaL_Reg xdplua_lib[] = {
 	{"udp_reply",			xdplua_udp_reply},
+	{"tcp_rst_reply",		xdplua_tcp_rst_reply},
 	{"fib_lookup",			xdplua_fib_lookup},
 	{"get_ifindex",			xdplua_get_ifindex},
 	{"do_redirect",			xdplua_do_redirect},
-	{"bpf_map_update_elem",	xdplua_map_update_elem},
-	{"bpf_map_lookup_elem",	xdplua_map_lookup_elem},
+	{"bpf_map_update_elem",		xdplua_map_update_elem},
+	{"bpf_map_lookup_elem",		xdplua_map_lookup_elem},
 	{NULL, NULL}
 };
 
